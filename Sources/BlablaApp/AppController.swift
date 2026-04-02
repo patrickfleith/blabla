@@ -107,6 +107,11 @@ final class AppController: NSObject, ObservableObject {
                 await self?.stopRecording()
             }
         }
+        hotKeyManager.onCancel = { [weak self] in
+            Task { @MainActor in
+                await self?.cancelRecording()
+            }
+        }
 
         settings.objectWillChange
             .sink { [weak self] _ in
@@ -190,6 +195,7 @@ final class AppController: NSObject, ObservableObject {
             meterLevel = 0
             workflowState = .recording
             widgetMessage = "Recording from \(selectedMicrophoneName)."
+            try? hotKeyManager.registerCancelEscape()
             syncWidgetVisibility()
         } catch {
             presentError(error.localizedDescription)
@@ -202,6 +208,7 @@ final class AppController: NSObject, ObservableObject {
         }
 
         let targetContext = autoInsertTargetContext
+        hotKeyManager.unregisterCancel()
         isStoppingRecording = true
         defer {
             isStoppingRecording = false
@@ -256,6 +263,28 @@ final class AppController: NSObject, ObservableObject {
         } catch {
             presentError(error.localizedDescription)
         }
+    }
+
+    func cancelRecording() async {
+        guard canStopRecording else {
+            return
+        }
+
+        autoHideTask?.cancel()
+        hotKeyManager.unregisterCancel()
+        isStoppingRecording = true
+        defer {
+            isStoppingRecording = false
+            autoInsertTargetContext = nil
+        }
+
+        await audioCaptureService.cancelRecording()
+        workflowState = .idle
+        widgetMessage = "Ready to transcribe."
+        lastTranscriptPreview = ""
+        meterLevel = 0
+        elapsedTime = 0
+        syncWidgetVisibility()
     }
 
     func showSettings() {
@@ -321,6 +350,7 @@ final class AppController: NSObject, ObservableObject {
     }
 
     private func presentError(_ message: String) {
+        hotKeyManager.unregisterCancel()
         autoInsertTargetContext = nil
         workflowState = .error
         widgetMessage = message

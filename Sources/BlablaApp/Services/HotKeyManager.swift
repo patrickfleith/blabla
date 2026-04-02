@@ -49,10 +49,12 @@ private func hotKeyEventHandler(
 final class HotKeyManager {
     var onStart: (() -> Void)?
     var onStop: (() -> Void)?
+    var onCancel: (() -> Void)?
 
     private var eventHandlerRef: EventHandlerRef?
     private var startHotKeyRef: EventHotKeyRef?
     private var stopHotKeyRef: EventHotKeyRef?
+    private var cancelHotKeyRef: EventHotKeyRef?
 
     init() {
         try? installHandler()
@@ -67,6 +69,7 @@ final class HotKeyManager {
 
     func register(start: KeyboardShortcut, stop: KeyboardShortcut) throws {
         try installHandler()
+        let shouldRestoreCancel = cancelHotKeyRef != nil
         unregisterAll()
 
         var startRef: EventHotKeyRef?
@@ -106,6 +109,40 @@ final class HotKeyManager {
 
         startHotKeyRef = startRef
         stopHotKeyRef = stopRef
+
+        if shouldRestoreCancel {
+            try registerCancelEscape()
+        }
+    }
+
+    func registerCancelEscape() throws {
+        try installHandler()
+        unregisterCancel()
+
+        var cancelRef: EventHotKeyRef?
+        var cancelID = EventHotKeyID()
+        cancelID.signature = hotKeySignature
+        cancelID.id = 3
+        let cancelStatus = RegisterEventHotKey(
+            UInt32(kVK_Escape),
+            0,
+            cancelID,
+            GetApplicationEventTarget(),
+            0,
+            &cancelRef
+        )
+        guard cancelStatus == noErr else {
+            throw HotKeyManagerError.failedToRegisterHotKey(cancelStatus)
+        }
+
+        cancelHotKeyRef = cancelRef
+    }
+
+    func unregisterCancel() {
+        if let cancelHotKeyRef {
+            UnregisterEventHotKey(cancelHotKeyRef)
+        }
+        cancelHotKeyRef = nil
     }
 
     func unregisterAll() {
@@ -115,8 +152,12 @@ final class HotKeyManager {
         if let stopHotKeyRef {
             UnregisterEventHotKey(stopHotKeyRef)
         }
+        if let cancelHotKeyRef {
+            UnregisterEventHotKey(cancelHotKeyRef)
+        }
         startHotKeyRef = nil
         stopHotKeyRef = nil
+        cancelHotKeyRef = nil
     }
 
     fileprivate func handlePressedHotKey(_ id: UInt32) {
@@ -125,6 +166,8 @@ final class HotKeyManager {
             onStart?()
         case 2:
             onStop?()
+        case 3:
+            onCancel?()
         default:
             break
         }

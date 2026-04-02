@@ -196,6 +196,24 @@ final class AudioCaptureService: NSObject, AVCaptureAudioDataOutputSampleBufferD
         }
     }
 
+    func cancelRecording() async {
+        await withCheckedContinuation { continuation in
+            captureQueue.async {
+                self.stopElapsedTimer()
+                self.audioOutput?.setSampleBufferDelegate(nil, queue: nil)
+                self.captureSession?.stopRunning()
+
+                if let writer = self.assetWriter,
+                   writer.status == .writing || writer.status == .unknown {
+                    writer.cancelWriting()
+                }
+
+                self.resetState(removeFile: true)
+                continuation.resume()
+            }
+        }
+    }
+
     func shutdown() {
         captureQueue.sync {
             stopElapsedTimer()
