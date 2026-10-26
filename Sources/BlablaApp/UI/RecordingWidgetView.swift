@@ -90,7 +90,7 @@ struct RecordingWidgetView: View {
             pillButton("Done") {
                 await controller.stopRecording()
             }
-            .help("Finish and transcribe (\(controller.settings.stopShortcut.displayString))")
+            .help("Finish and transcribe (\(controller.settings.startShortcut.displayString))")
         }
     }
 

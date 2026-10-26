@@ -70,6 +70,12 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    @Published var holdToTalk: Bool {
+        didSet {
+            defaults.set(holdToTalk, forKey: Keys.holdToTalk)
+        }
+    }
+
     @Published var soundsEnabled: Bool {
         didSet {
             defaults.set(soundsEnabled, forKey: Keys.soundsEnabled)
@@ -117,6 +123,7 @@ final class AppSettings: ObservableObject {
 
         microphoneID = defaults.string(forKey: Keys.microphoneID)
         autoInsert = defaults.object(forKey: Keys.autoInsert) as? Bool ?? false
+        holdToTalk = defaults.bool(forKey: Keys.holdToTalk)
         soundsEnabled = defaults.object(forKey: Keys.soundsEnabled) as? Bool ?? true
         beepVolume = Self.clampBeepVolume(defaults.object(forKey: Keys.beepVolume) as? Double ?? 0.7)
         startShortcut = Self.decodeShortcut(defaults.data(forKey: Keys.startShortcut)) ?? .defaultStart
@@ -175,6 +182,7 @@ final class AppSettings: ObservableObject {
         static let languageCode = "settings.languageCode"
         static let microphoneID = "settings.microphoneID"
         static let autoInsert = "settings.autoInsert"
+        static let holdToTalk = "settings.holdToTalk"
         static let soundsEnabled = "settings.soundsEnabled"
         static let beepVolume = "settings.beepVolume"
         static let startShortcut = "settings.startShortcut"

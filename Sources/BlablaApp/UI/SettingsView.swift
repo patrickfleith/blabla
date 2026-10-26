@@ -100,8 +100,13 @@ struct SettingsView: View {
 
     private var shortcutsSection: some View {
         Section("Global Shortcuts") {
-            ShortcutRecorderView(title: "Start recording", shortcut: startShortcutBinding)
+            ShortcutRecorderView(title: "Start / stop recording", shortcut: startShortcutBinding)
             ShortcutRecorderView(title: "Stop recording", shortcut: stopShortcutBinding)
+
+            Toggle("Hold shortcut to talk", isOn: holdToTalkBinding)
+            Text("Hold the start / stop shortcut while speaking and release it to finish. A quick press still starts and stops recording.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
 
             Text("Press Escape while recording a shortcut to cancel.")
                 .font(.caption)
@@ -199,6 +204,13 @@ struct SettingsView: View {
         Binding(
             get: { controller.settings.autoInsert },
             set: { controller.settings.autoInsert = $0 }
+        )
+    }
+
+    private var holdToTalkBinding: Binding<Bool> {
+        Binding(
+            get: { controller.settings.holdToTalk },
+            set: { controller.settings.holdToTalk = $0 }
         )
     }
 

@@ -30,6 +30,7 @@ final class AppController: NSObject, ObservableObject {
     private var isStoppingRecording = false
     private var autoHideTask: Task<Void, Never>?
     private var autoInsertTargetContext: AutoInsertTargetContext?
+    private var shortcutPressedAt: Date?
 
     var menuBarSymbolName: String {
         switch workflowState {
@@ -100,7 +101,13 @@ final class AppController: NSObject, ObservableObject {
 
         hotKeyManager.onStart = { [weak self] in
             Task { @MainActor in
-                await self?.startRecording()
+                self?.shortcutPressedAt = Date()
+                await self?.toggleRecording()
+            }
+        }
+        hotKeyManager.onStartReleased = { [weak self] in
+            Task { @MainActor in
+                await self?.handleStartShortcutReleased()
             }
         }
         hotKeyManager.onStop = { [weak self] in
@@ -157,6 +164,14 @@ final class AppController: NSObject, ObservableObject {
         if let microphoneID = settings.microphoneID,
            !availableMicrophones.contains(where: { $0.id == microphoneID }) {
             settings.microphoneID = nil
+        }
+    }
+
+    func toggleRecording() async {
+        if workflowState == .recording {
+            await stopRecording()
+        } else {
+            await startRecording()
         }
     }
 
@@ -331,6 +346,18 @@ final class AppController: NSObject, ObservableObject {
 
     func playFeedbackPreview() {
         soundFeedbackService.play(.success)
+    }
+
+    // In hold-to-talk mode, releasing after a real hold finishes the dictation; a quick tap keeps toggling.
+    private func handleStartShortcutReleased() async {
+        guard let pressedAt = shortcutPressedAt else {
+            return
+        }
+
+        shortcutPressedAt = nil
+        if settings.holdToTalk, Date().timeIntervalSince(pressedAt) >= 0.5 {
+            await stopRecording()
+        }
     }
 
     private func registerHotKeys(start: KeyboardShortcut, stop: KeyboardShortcut) {
