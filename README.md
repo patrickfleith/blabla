@@ -19,7 +19,9 @@ This repository is set up for people who want to build the app from source and i
   - `gpt-4o-transcribe`
   - `gpt-4o-mini-transcribe-2025-12-15`
 - Mistral AI
-  - `voxtral-mini-latest`
+  - `voxtral-mini-transcribe-3-0` (default, Voxtral 3, public preview)
+  - `voxtral-small-transcribe-3-0` (Voxtral 3, higher accuracy, public preview)
+  - `voxtral-mini-latest` (Voxtral Transcribe 2, stable fallback)
 
 ## Requirements
 
@@ -221,6 +223,7 @@ Try this:
 
 - Make sure `Auto-insert after transcription` is enabled.
 - Grant Accessibility permission in Blabla settings or in `System Settings > Privacy & Security > Accessibility`.
+- After rebuilding, macOS can keep showing `Blabla` as enabled while no longer trusting the new ad-hoc signed build. If the widget says auto-insert needs Accessibility permission, run `tccutil reset Accessibility com.astro.blabla` and grant it again.
 - Retry in a normal editable text field.
 - Be aware that secure fields and some protected inputs intentionally block auto-insert. In those cases Blabla falls back to clipboard-only behavior.
 

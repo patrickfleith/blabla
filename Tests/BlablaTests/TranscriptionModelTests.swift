@@ -9,12 +9,23 @@ struct TranscriptionModelTests {
     }
 
     @Test
+    func mistralFallbackOrderIsStable() {
+        #expect(
+            TranscriptionModel.voxtralMiniTranscribe3.fallbackCandidates == [.voxtralSmallTranscribe3, .voxtralMiniLatest]
+        )
+        #expect(
+            TranscriptionModel.voxtralSmallTranscribe3.fallbackCandidates == [.voxtralMiniTranscribe3, .voxtralMiniLatest]
+        )
+        #expect(TranscriptionModel.voxtralMiniLatest.fallbackCandidates.isEmpty)
+    }
+
+    @Test
     func providerModelFilteringReturnsOnlyCompatibleModels() {
         #expect(
             TranscriptionModel.models(for: .openAI) == [.gpt4oTranscribe, .gpt4oMiniTranscribeSnapshot]
         )
         #expect(
-            TranscriptionModel.models(for: .mistral) == [.voxtralMiniLatest]
+            TranscriptionModel.models(for: .mistral) == [.voxtralMiniTranscribe3, .voxtralSmallTranscribe3, .voxtralMiniLatest]
         )
     }
 }

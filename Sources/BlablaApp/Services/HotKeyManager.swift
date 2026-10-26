@@ -42,12 +42,13 @@ private func hotKeyEventHandler(
     }
 
     let manager = Unmanaged<HotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-    manager.handlePressedHotKey(hotKeyID.id)
+    manager.handleHotKey(hotKeyID.id, released: GetEventKind(event) == UInt32(kEventHotKeyReleased))
     return noErr
 }
 
 final class HotKeyManager {
     var onStart: (() -> Void)?
+    var onStartReleased: (() -> Void)?
     var onStop: (() -> Void)?
     var onCancel: (() -> Void)?
 
@@ -160,13 +161,15 @@ final class HotKeyManager {
         cancelHotKeyRef = nil
     }
 
-    fileprivate func handlePressedHotKey(_ id: UInt32) {
-        switch id {
-        case 1:
+    fileprivate func handleHotKey(_ id: UInt32, released: Bool) {
+        switch (id, released) {
+        case (1, false):
             onStart?()
-        case 2:
+        case (1, true):
+            onStartReleased?()
+        case (2, false):
             onStop?()
-        case 3:
+        case (3, false):
             onCancel?()
         default:
             break
@@ -178,15 +181,15 @@ final class HotKeyManager {
             return
         }
 
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
-        )
+        let eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
             hotKeyEventHandler,
-            1,
-            &eventType,
+            eventTypes.count,
+            eventTypes,
             Unmanaged.passUnretained(self).toOpaque(),
             &eventHandlerRef
         )
