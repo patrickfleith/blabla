@@ -223,6 +223,7 @@ Try this:
 
 - Make sure `Auto-insert after transcription` is enabled.
 - Grant Accessibility permission in Blabla settings or in `System Settings > Privacy & Security > Accessibility`.
+- After rebuilding, macOS can keep showing `Blabla` as enabled while no longer trusting the new ad-hoc signed build. If the widget says auto-insert needs Accessibility permission, run `tccutil reset Accessibility com.astro.blabla` and grant it again.
 - Retry in a normal editable text field.
 - Be aware that secure fields and some protected inputs intentionally block auto-insert. In those cases Blabla falls back to clipboard-only behavior.
 

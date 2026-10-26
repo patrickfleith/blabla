@@ -14,10 +14,27 @@ struct AutoInsertTargetContext: Equatable {
 }
 
 enum InsertOutcome: Equatable {
-    case copiedOnly(message: String)
-    case inserted
+    case inserted(appName: String)
+    case copied(reason: String?)
+
+    var title: String {
+        switch self {
+        case .inserted(let appName):
+            return "Inserted into \(appName)"
+        case .copied:
+            return "Copied — press ⌘V to paste"
+        }
+    }
+
+    var detail: String? {
+        if case .copied(let reason) = self {
+            return reason
+        }
+        return nil
+    }
 }
 
+@MainActor
 final class PasteboardInsertService {
     func captureTargetContext() -> AutoInsertTargetContext? {
         guard let app = NSWorkspace.shared.frontmostApplication else {
@@ -39,44 +56,37 @@ final class PasteboardInsertService {
         _ text: String,
         autoInsert: Bool,
         targetContext: AutoInsertTargetContext?
-    ) -> InsertOutcome {
+    ) async -> InsertOutcome {
         copyToPasteboard(text)
 
         guard autoInsert else {
-            return .copiedOnly(message: "Copied to clipboard.")
+            return .copied(reason: nil)
         }
 
         guard requestAccessibilityTrust(prompt: true) else {
-            return .copiedOnly(message: "Copied to clipboard. Accessibility permission is required for auto-insert.")
+            return .copied(reason: "Auto-insert needs Accessibility permission.")
         }
 
         guard let targetContext = targetContext ?? captureTargetContext() else {
-            return .copiedOnly(message: "Copied to clipboard. Blabla could not recover the original app for auto-insert.")
+            return .copied(reason: "No app to insert into.")
         }
 
-        guard reactivateApplication(for: targetContext) else {
-            return .copiedOnly(message: "Copied to clipboard. \(targetContext.displayName) was no longer available for auto-insert.")
+        guard await bringToFront(targetContext) else {
+            return .copied(reason: "Couldn't switch back to \(targetContext.displayName).")
         }
 
-        let focusedElement = focusedElement(for: targetContext.processIdentifier)
-
-        if let focusedElement, isSecureField(focusedElement) {
-            return .copiedOnly(message: "Copied to clipboard. Auto-insert was blocked in a secure field.")
+        if let focusedElement = focusedElement(for: targetContext.processIdentifier),
+           isSecureField(focusedElement) {
+            return .copied(reason: "Not inserted into a password field.")
         }
 
-        if let focusedElement, insertTextDirectly(text, into: focusedElement) {
-            return .inserted
+        // Setting kAXSelectedText reports success in Chromium and Electron apps without inserting
+        // anything, so a system-level ⌘V is the only path that behaves the same everywhere.
+        guard postPasteShortcut() else {
+            return .copied(reason: "Couldn't paste into \(targetContext.displayName).")
         }
 
-        if simulatePasteShortcut(targetPID: targetContext.processIdentifier) {
-            return .inserted
-        }
-
-        if simulatePasteShortcut(targetPID: nil) {
-            return .inserted
-        }
-
-        return .copiedOnly(message: "Copied to clipboard. Auto-insert failed in \(targetContext.displayName).")
+        return .inserted(appName: targetContext.displayName)
     }
 
     func requestAccessibilityTrust(prompt: Bool) -> Bool {
@@ -90,16 +100,26 @@ final class PasteboardInsertService {
         pasteboard.setString(text, forType: .string)
     }
 
-    private func reactivateApplication(for targetContext: AutoInsertTargetContext) -> Bool {
-        guard let application = NSWorkspace.shared.runningApplications.first(where: {
-            $0.processIdentifier == targetContext.processIdentifier
-        }) else {
+    private func bringToFront(_ targetContext: AutoInsertTargetContext) async -> Bool {
+        guard let application = NSRunningApplication(processIdentifier: targetContext.processIdentifier),
+              !application.isTerminated else {
             return false
         }
 
-        let activated = application.activate(options: [.activateAllWindows])
-        usleep(140_000)
-        return activated || NSWorkspace.shared.frontmostApplication?.processIdentifier == targetContext.processIdentifier
+        if application.isActive {
+            return true
+        }
+
+        application.activate()
+        for _ in 0..<20 {
+            try? await Task.sleep(for: .milliseconds(25))
+            if application.isActive {
+                // Give the reactivated window time to restore keyboard focus before pasting.
+                try? await Task.sleep(for: .milliseconds(120))
+                return true
+            }
+        }
+        return false
     }
 
     private func focusedElement(for processIdentifier: pid_t) -> AXUIElement? {
@@ -135,25 +155,6 @@ final class PasteboardInsertService {
         return role.contains("secure") || subrole.contains("secure")
     }
 
-    private func insertTextDirectly(_ text: String, into element: AXUIElement) -> Bool {
-        guard isAttributeSettable(named: kAXSelectedTextAttribute as String, on: element) else {
-            return false
-        }
-
-        let status = AXUIElementSetAttributeValue(
-            element,
-            kAXSelectedTextAttribute as CFString,
-            text as CFString
-        )
-        return status == .success
-    }
-
-    private func isAttributeSettable(named name: String, on element: AXUIElement) -> Bool {
-        var isSettable: DarwinBoolean = false
-        let status = AXUIElementIsAttributeSettable(element, name as CFString, &isSettable)
-        return status == .success && isSettable.boolValue
-    }
-
     private func stringAttributeValue(named name: String, from element: AXUIElement) -> String? {
         var value: CFTypeRef?
         let status = AXUIElementCopyAttributeValue(element, name as CFString, &value)
@@ -163,48 +164,18 @@ final class PasteboardInsertService {
         return value as? String
     }
 
-    private func simulatePasteShortcut(targetPID: pid_t?) -> Bool {
-        usleep(70_000)
-
-        guard let source = CGEventSource(stateID: .hidSystemState),
-              let commandDown = CGEvent(
-                  keyboardEventSource: source,
-                  virtualKey: CGKeyCode(kVK_Command),
-                  keyDown: true
-              ),
-              let vDown = CGEvent(
-                  keyboardEventSource: source,
-                  virtualKey: CGKeyCode(kVK_ANSI_V),
-                  keyDown: true
-              ),
-              let vUp = CGEvent(
-                  keyboardEventSource: source,
-                  virtualKey: CGKeyCode(kVK_ANSI_V),
-                  keyDown: false
-              ),
-              let commandUp = CGEvent(
-                  keyboardEventSource: source,
-                  virtualKey: CGKeyCode(kVK_Command),
-                  keyDown: false
-              ) else {
+    private func postPasteShortcut() -> Bool {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        guard let keyDown = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+              let keyUp = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
             return false
         }
 
-        vDown.flags = .maskCommand
-        vUp.flags = .maskCommand
-
-        post(commandDown, targetPID: targetPID)
-        post(vDown, targetPID: targetPID)
-        post(vUp, targetPID: targetPID)
-        post(commandUp, targetPID: targetPID)
+        // Explicit flags keep modifiers still held from the stop shortcut out of the paste.
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        keyDown.post(tap: .cgSessionEventTap)
+        keyUp.post(tap: .cgSessionEventTap)
         return true
-    }
-
-    private func post(_ event: CGEvent, targetPID: pid_t?) {
-        if let targetPID {
-            event.postToPid(targetPID)
-        } else {
-            event.post(tap: .cghidEventTap)
-        }
     }
 }

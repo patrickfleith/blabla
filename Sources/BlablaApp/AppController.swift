@@ -13,6 +13,7 @@ final class AppController: NSObject, ObservableObject {
     @Published private(set) var availableMicrophones: [MicrophoneDevice] = []
     @Published private(set) var lastTranscriptPreview = ""
     @Published private(set) var lastResultModel: TranscriptionModel?
+    @Published private(set) var lastInsertOutcome: InsertOutcome?
 
     let settings = AppSettings.shared
 
@@ -241,25 +242,24 @@ final class AppController: NSObject, ObservableObject {
             lastResultModel = result.model
             lastTranscriptPreview = transcriptPreview(for: result.text)
 
-            let insertOutcome = pasteboardInsertService.copyAndMaybeInsert(
+            let insertOutcome = await pasteboardInsertService.copyAndMaybeInsert(
                 result.text,
                 autoInsert: settings.autoInsert,
                 targetContext: targetContext
             )
-
-            switch insertOutcome {
-            case .inserted:
-                widgetMessage = "Copied to clipboard and inserted at the cursor."
-            case .copiedOnly(let message):
-                widgetMessage = message
-            }
+            lastInsertOutcome = insertOutcome
+            widgetMessage = [insertOutcome.title, insertOutcome.detail].compactMap { $0 }.joined(separator: ". ")
 
             workflowState = .success
             if settings.soundsEnabled {
                 soundFeedbackService.play(.success)
             }
             syncWidgetVisibility()
-            scheduleAutoHide(after: 2.4)
+            if case .inserted = insertOutcome {
+                scheduleAutoHide(after: 2.4)
+            } else {
+                scheduleAutoHide(after: 5)
+            }
         } catch {
             presentError(error.localizedDescription)
         }
