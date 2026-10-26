@@ -12,8 +12,8 @@ final class AppController: NSObject, ObservableObject {
     @Published private(set) var elapsedTime: TimeInterval = 0
     @Published private(set) var availableMicrophones: [MicrophoneDevice] = []
     @Published private(set) var lastTranscriptPreview = ""
-    @Published private(set) var lastResultModel: TranscriptionModel?
     @Published private(set) var lastInsertOutcome: InsertOutcome?
+    @Published private(set) var recentTranscripts: [String] = []
     @Published private var failedRecording: RecordingArtifact?
 
     let settings = AppSettings.shared
@@ -139,12 +139,6 @@ final class AppController: NSObject, ObservableObject {
             }
             .store(in: &subscriptions)
 
-        settings.$provider
-            .sink { [weak self] _ in
-                self?.lastResultModel = nil
-            }
-            .store(in: &subscriptions)
-
         settings.$beepVolume
             .removeDuplicates()
             .sink { [weak self] volume in
@@ -189,6 +183,10 @@ final class AppController: NSObject, ObservableObject {
         autoHideTask?.cancel()
         let targetContext = settings.autoInsert ? pasteboardInsertService.captureTargetContext() : nil
         await transcribeAndDeliver(failedRecording, targetContext: targetContext)
+    }
+
+    func copyToClipboard(_ text: String) {
+        pasteboardInsertService.copyToPasteboard(text)
     }
 
     func startRecording() async {
@@ -355,8 +353,8 @@ final class AppController: NSObject, ObservableObject {
         replaceFailedRecording(with: nil)
         try? FileManager.default.removeItem(at: recording.fileURL)
 
-        lastResultModel = result.model
         lastTranscriptPreview = transcriptPreview(for: result.text)
+        recentTranscripts = Array(([result.text] + recentTranscripts).prefix(5))
 
         let insertOutcome = await pasteboardInsertService.copyAndMaybeInsert(
             result.text,

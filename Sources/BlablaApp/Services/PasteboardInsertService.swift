@@ -94,7 +94,7 @@ final class PasteboardInsertService {
         return AXIsProcessTrustedWithOptions(options)
     }
 
-    private func copyToPasteboard(_ text: String) {
+    func copyToPasteboard(_ text: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
