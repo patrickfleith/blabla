@@ -355,7 +355,7 @@ final class AppController: NSObject, ObservableObject {
         workflowState = .error
         widgetMessage = message
         syncWidgetVisibility()
-        scheduleAutoHide(after: 4.5)
+        scheduleAutoHide(after: 7)
     }
 
     private func transcriptPreview(for text: String) -> String {

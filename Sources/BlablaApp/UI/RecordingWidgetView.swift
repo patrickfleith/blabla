@@ -1,49 +1,25 @@
 import SwiftUI
 
 struct RecordingWidgetView: View {
-    static func panelSize(for state: RecordingWorkflowState) -> CGSize {
-        switch state {
-        case .idle:
-            return CGSize(width: 1, height: 1)
-        case .recording:
-            return CGSize(width: 560, height: 122)
-        case .transcribing:
-            return CGSize(width: 364, height: 74)
-        case .success:
-            return CGSize(width: 560, height: 112)
-        case .error:
-            return CGSize(width: 500, height: 88)
-        }
-    }
+    static let pillSize = CGSize(width: 360, height: 52)
+    // The panel is larger than the pill so the shadow is never clipped by the window bounds.
+    static let shadowMargin: CGFloat = 24
+    static let panelSize = CGSize(
+        width: pillSize.width + shadowMargin * 2,
+        height: pillSize.height + shadowMargin * 2
+    )
 
     @EnvironmentObject private var controller: AppController
 
     var body: some View {
-        let panelSize = Self.panelSize(for: controller.workflowState)
-
-        ZStack {
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(.regularMaterial)
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.14),
-                            Color.white.opacity(0.03),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-            RoundedRectangle(cornerRadius: 30, style: .continuous)
-                .strokeBorder(borderGradient, lineWidth: 0.9)
-
-            content
-                .padding(.horizontal, horizontalPadding)
-                .padding(.vertical, verticalPadding)
-        }
-        .frame(width: panelSize.width, height: panelSize.height)
-        .shadow(color: .black.opacity(0.14), radius: 24, x: 0, y: 16)
+        content
+            .padding(.horizontal, 16)
+            .frame(width: Self.pillSize.width, height: Self.pillSize.height)
+            .background(.regularMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
+            .shadow(color: .black.opacity(0.25), radius: 12, y: 5)
+            .frame(width: Self.panelSize.width, height: Self.panelSize.height)
+            .animation(.snappy(duration: 0.25), value: controller.workflowState)
     }
 
     @ViewBuilder
@@ -53,287 +29,130 @@ struct RecordingWidgetView: View {
             EmptyView()
         case .recording:
             recordingLayout
+                .transition(.opacity)
         case .transcribing:
-            transcribingLayout
+            HStack(spacing: 10) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Transcribing…")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: 0)
+            }
+            .transition(.opacity)
         case .success:
             successLayout
+                .transition(.opacity)
         case .error:
-            errorLayout
+            statusRow(
+                symbol: "exclamationmark.triangle.fill",
+                tint: .orange,
+                title: controller.widgetMessage,
+                detail: nil
+            )
+            .transition(.opacity)
         }
     }
 
     private var recordingLayout: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 14) {
-                Text(recordingMetadata)
-                    .font(.system(size: 12.5, weight: .medium, design: .rounded))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+        HStack(spacing: 10) {
+            Image(systemName: "mic.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.red)
+                .symbolEffect(.pulse)
 
-                Spacer(minLength: 12)
+            Text("Listening")
+                .font(.system(size: 13, weight: .semibold))
 
-                Text(formattedDuration(controller.elapsedTime))
-                    .font(.system(size: 28, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
+            VoiceWaveform(level: controller.meterLevel)
 
-                Button {
-                    Task {
-                        await controller.stopRecording()
-                    }
-                } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(Color(red: 1.0, green: 0.44, blue: 0.4))
-                        .frame(width: 28, height: 28)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(0.08))
-                        )
-                        .overlay(
-                            Circle()
-                                .strokeBorder(Color.white.opacity(0.08), lineWidth: 0.8)
-                        )
+            Text(formattedDuration(controller.elapsedTime))
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Button {
+                Task {
+                    await controller.cancelRecording()
                 }
-                .buttonStyle(.plain)
+            } label: {
+                Text("esc")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .strokeBorder(Color.secondary.opacity(0.5), lineWidth: 0.5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .help("Cancel and discard the recording")
+
+            pillButton("Done") {
+                await controller.stopRecording()
+            }
+            .help("Finish and transcribe (\(controller.settings.stopShortcut.displayString))")
+        }
+    }
+
+    @ViewBuilder
+    private var successLayout: some View {
+        if let outcome = controller.lastInsertOutcome {
+            let isInserted = if case .inserted = outcome { true } else { false }
+            statusRow(
+                symbol: isInserted ? "checkmark.circle.fill" : "doc.on.clipboard.fill",
+                tint: isInserted ? .green : .blue,
+                title: outcome.title,
+                detail: outcome.detail ?? transcriptPreview
+            )
+        }
+    }
+
+    private func pillButton(_ title: String, action: @escaping () async -> Void) -> some View {
+        Button {
+            Task {
+                await action()
+            }
+        } label: {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .padding(.horizontal, 10)
+                .frame(height: 24)
+                .background(Color.primary.opacity(0.1), in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func statusRow(symbol: String, tint: Color, title: String, detail: String?) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.system(size: 16))
+                .foregroundStyle(tint)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .lineLimit(detail == nil ? 2 : 1)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
 
-            MinimalWaveform(level: controller.meterLevel)
+            Spacer(minLength: 0)
         }
     }
 
-    private var transcribingLayout: some View {
-        ProcessingLine()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var successLayout: some View {
-        Text(successText)
-            .font(.system(size: 16, weight: .medium, design: .rounded))
-            .foregroundStyle(.primary)
-            .lineLimit(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    }
-
-    private var errorLayout: some View {
-        HStack(spacing: 10) {
-            Circle()
-                .fill(Color(red: 1.0, green: 0.43, blue: 0.38))
-                .frame(width: 7, height: 7)
-
-            Text(controller.widgetMessage)
-                .font(.system(size: 14, weight: .medium, design: .rounded))
-                .foregroundStyle(.primary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-    }
-
-    private var recordingMetadata: String {
-        [
-            controller.settings.selectedLanguage.code.uppercased(),
-            compactModelName,
-            compactMicrophoneName,
-        ]
-        .filter { !$0.isEmpty }
-        .joined(separator: " · ")
-    }
-
-    private var compactModelName: String {
-        switch currentModel {
-        case .gpt4oTranscribe:
-            return "GPT-4o Transcribe"
-        case .gpt4oMiniTranscribeSnapshot:
-            return "GPT-4o Mini Transcribe"
-        case .voxtralMiniTranscribe3:
-            return "Voxtral Mini Transcribe 3"
-        case .voxtralSmallTranscribe3:
-            return "Voxtral Small Transcribe 3"
-        case .voxtralMiniLatest:
-            return "Voxtral Mini Latest"
-        }
-    }
-
-    private var compactMicrophoneName: String {
-        let name = controller.selectedMicrophoneName
-        guard name.hasPrefix("Default ("), name.hasSuffix(")") else {
-            return name
-        }
-
-        return String(name.dropFirst("Default (".count).dropLast())
-    }
-
-    private var successText: String {
+    private var transcriptPreview: String? {
         let preview = controller.lastTranscriptPreview
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        return preview.isEmpty ? controller.widgetMessage : preview
-    }
-
-    private var currentModel: TranscriptionModel {
-        controller.lastResultModel ?? controller.settings.selectedModel
-    }
-
-    private var horizontalPadding: CGFloat {
-        switch controller.workflowState {
-        case .recording:
-            return 22
-        case .transcribing:
-            return 28
-        case .success, .error:
-            return 20
-        case .idle:
-            return 0
-        }
-    }
-
-    private var verticalPadding: CGFloat {
-        switch controller.workflowState {
-        case .recording:
-            return 18
-        case .transcribing:
-            return 18
-        case .success:
-            return 18
-        case .error:
-            return 16
-        case .idle:
-            return 0
-        }
-    }
-
-    private var statusTint: Color {
-        switch controller.workflowState {
-        case .idle:
-            return Color.white.opacity(0.7)
-        case .recording:
-            return Color(red: 1.0, green: 0.43, blue: 0.38)
-        case .transcribing:
-            return Color(red: 0.62, green: 0.77, blue: 1.0)
-        case .success:
-            return Color.green.opacity(0.82)
-        case .error:
-            return Color.red.opacity(0.82)
-        }
-    }
-
-    private var borderGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                Color.white.opacity(0.24),
-                statusTint.opacity(0.16),
-                Color.white.opacity(0.12),
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+        return preview.isEmpty ? nil : preview
     }
 
     private func formattedDuration(_ seconds: TimeInterval) -> String {
         let totalSeconds = Int(seconds.rounded())
-        let minutes = totalSeconds / 60
-        let remainingSeconds = totalSeconds % 60
-        return String(format: "%02d:%02d", minutes, remainingSeconds)
-    }
-}
-
-private struct MinimalWaveform: View {
-    let level: Double
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 4) {
-            ForEach(0..<30, id: \.self) { index in
-                Capsule(style: .continuous)
-                    .fill(barStyle(for: index))
-                    .frame(width: 3, height: barHeight(for: index))
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 42)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.white.opacity(0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.8)
-        )
-    }
-
-    private var activeBars: Int {
-        max(2, Int((level * 30).rounded(.up)))
-    }
-
-    private func barHeight(for index: Int) -> CGFloat {
-        let pattern: [CGFloat] = [10, 14, 18, 24, 14, 20, 28, 16, 10, 18, 26, 14, 10, 16, 22, 28, 14, 10, 14, 22, 26, 18, 10, 14, 20, 24, 16, 10, 16, 22]
-        let base = pattern[index % pattern.count]
-        let multiplier = 0.42 + CGFloat(level * 0.7)
-        return base * multiplier
-    }
-
-    private func barStyle(for index: Int) -> AnyShapeStyle {
-        if index < activeBars {
-            return AnyShapeStyle(
-                LinearGradient(
-                    colors: [
-                        Color.white.opacity(0.86),
-                        Color(red: 1.0, green: 0.56, blue: 0.48).opacity(0.88),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-        }
-
-        return AnyShapeStyle(Color.white.opacity(0.12))
-    }
-}
-
-private struct ProcessingLine: View {
-    @State private var isAnimating = false
-
-    var body: some View {
-        GeometryReader { geometry in
-            let width = geometry.size.width
-            let segmentWidth = max(76, width * 0.26)
-
-            ZStack(alignment: .leading) {
-                Capsule(style: .continuous)
-                    .fill(Color.white.opacity(0.08))
-                    .frame(height: 4)
-
-                Capsule(style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.18),
-                                Color.white.opacity(0.92),
-                                Color.white.opacity(0.18),
-                            ],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: segmentWidth, height: 4)
-                    .offset(x: isAnimating ? width - segmentWidth : 0)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-        }
-        .frame(height: 18)
-        .clipped()
-        .onAppear {
-            guard !isAnimating else {
-                return
-            }
-
-            withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
-                isAnimating = true
-            }
-        }
+        return String(format: "%d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 }
