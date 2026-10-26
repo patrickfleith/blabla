@@ -43,12 +43,20 @@ struct RecordingWidgetView: View {
             successLayout
                 .transition(.opacity)
         case .error:
-            statusRow(
-                symbol: "exclamationmark.triangle.fill",
-                tint: .orange,
-                title: controller.widgetMessage,
-                detail: nil
-            )
+            HStack(spacing: 10) {
+                statusRow(
+                    symbol: "exclamationmark.triangle.fill",
+                    tint: .orange,
+                    title: controller.widgetMessage,
+                    detail: nil
+                )
+                if controller.canRetry {
+                    pillButton("Retry") {
+                        await controller.retryLastRecording()
+                    }
+                    .help("Transcribe the same recording again")
+                }
+            }
             .transition(.opacity)
         }
     }

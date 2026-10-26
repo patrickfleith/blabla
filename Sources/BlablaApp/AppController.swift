@@ -14,6 +14,7 @@ final class AppController: NSObject, ObservableObject {
     @Published private(set) var lastTranscriptPreview = ""
     @Published private(set) var lastResultModel: TranscriptionModel?
     @Published private(set) var lastInsertOutcome: InsertOutcome?
+    @Published private var failedRecording: RecordingArtifact?
 
     let settings = AppSettings.shared
 
@@ -70,6 +71,10 @@ final class AppController: NSObject, ObservableObject {
 
     var canStopRecording: Bool {
         workflowState == .recording && !isStoppingRecording
+    }
+
+    var canRetry: Bool {
+        failedRecording != nil && canStartRecording
     }
 
     func bootstrap() {
@@ -156,6 +161,7 @@ final class AppController: NSObject, ObservableObject {
         autoHideTask?.cancel()
         hotKeyManager.unregisterAll()
         audioCaptureService.shutdown()
+        replaceFailedRecording(with: nil)
         floatingWidgetController.hide()
     }
 
@@ -173,6 +179,16 @@ final class AppController: NSObject, ObservableObject {
         } else {
             await startRecording()
         }
+    }
+
+    func retryLastRecording() async {
+        guard canRetry, let failedRecording else {
+            return
+        }
+
+        autoHideTask?.cancel()
+        let targetContext = settings.autoInsert ? pasteboardInsertService.captureTargetContext() : nil
+        await transcribeAndDeliver(failedRecording, targetContext: targetContext)
     }
 
     func startRecording() async {
@@ -231,53 +247,21 @@ final class AppController: NSObject, ObservableObject {
             self.autoInsertTargetContext = nil
         }
 
+        let recording: RecordingArtifact
         do {
-            let recordingArtifact = try await audioCaptureService.stopRecording()
-            defer {
-                try? FileManager.default.removeItem(at: recordingArtifact.fileURL)
-            }
-
-            elapsedTime = recordingArtifact.duration
-            meterLevel = 0
-
-            if settings.soundsEnabled {
-                soundFeedbackService.play(.stop)
-            }
-
-            workflowState = .transcribing
-            widgetMessage = "Transcribing with \(settings.selectedModel.displayName)..."
-            syncWidgetVisibility()
-
-            let result = try await transcriptionService.transcribe(
-                audioFileURL: recordingArtifact.fileURL,
-                provider: settings.provider,
-                selectedModel: settings.selectedModel,
-                languageCode: settings.languageCode
-            )
-            lastResultModel = result.model
-            lastTranscriptPreview = transcriptPreview(for: result.text)
-
-            let insertOutcome = await pasteboardInsertService.copyAndMaybeInsert(
-                result.text,
-                autoInsert: settings.autoInsert,
-                targetContext: targetContext
-            )
-            lastInsertOutcome = insertOutcome
-            widgetMessage = [insertOutcome.title, insertOutcome.detail].compactMap { $0 }.joined(separator: ". ")
-
-            workflowState = .success
-            if settings.soundsEnabled {
-                soundFeedbackService.play(.success)
-            }
-            syncWidgetVisibility()
-            if case .inserted = insertOutcome {
-                scheduleAutoHide(after: 2.4)
-            } else {
-                scheduleAutoHide(after: 5)
-            }
+            recording = try await audioCaptureService.stopRecording()
         } catch {
             presentError(error.localizedDescription)
+            return
         }
+
+        elapsedTime = recording.duration
+        meterLevel = 0
+        if settings.soundsEnabled {
+            soundFeedbackService.play(.stop)
+        }
+
+        await transcribeAndDeliver(recording, targetContext: targetContext)
     }
 
     func cancelRecording() async {
@@ -346,6 +330,59 @@ final class AppController: NSObject, ObservableObject {
 
     func playFeedbackPreview() {
         soundFeedbackService.play(.success)
+    }
+
+    private func transcribeAndDeliver(_ recording: RecordingArtifact, targetContext: AutoInsertTargetContext?) async {
+        workflowState = .transcribing
+        widgetMessage = "Transcribing with \(settings.selectedModel.displayName)..."
+        syncWidgetVisibility()
+
+        let result: TranscriptionResult
+        do {
+            result = try await transcriptionService.transcribe(
+                audioFileURL: recording.fileURL,
+                provider: settings.provider,
+                selectedModel: settings.selectedModel,
+                languageCode: settings.languageCode
+            )
+        } catch {
+            // Keep the audio so a network or provider failure doesn't cost the user their dictation.
+            replaceFailedRecording(with: recording)
+            presentError(error.localizedDescription)
+            return
+        }
+
+        replaceFailedRecording(with: nil)
+        try? FileManager.default.removeItem(at: recording.fileURL)
+
+        lastResultModel = result.model
+        lastTranscriptPreview = transcriptPreview(for: result.text)
+
+        let insertOutcome = await pasteboardInsertService.copyAndMaybeInsert(
+            result.text,
+            autoInsert: settings.autoInsert,
+            targetContext: targetContext
+        )
+        lastInsertOutcome = insertOutcome
+        widgetMessage = [insertOutcome.title, insertOutcome.detail].compactMap { $0 }.joined(separator: ". ")
+
+        workflowState = .success
+        if settings.soundsEnabled {
+            soundFeedbackService.play(.success)
+        }
+        syncWidgetVisibility()
+        if case .inserted = insertOutcome {
+            scheduleAutoHide(after: 2.4)
+        } else {
+            scheduleAutoHide(after: 5)
+        }
+    }
+
+    private func replaceFailedRecording(with recording: RecordingArtifact?) {
+        if let failedRecording, failedRecording.fileURL != recording?.fileURL {
+            try? FileManager.default.removeItem(at: failedRecording.fileURL)
+        }
+        failedRecording = recording
     }
 
     // In hold-to-talk mode, releasing after a real hold finishes the dictation; a quick tap keeps toggling.
