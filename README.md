@@ -19,7 +19,9 @@ This repository is set up for people who want to build the app from source and i
   - `gpt-4o-transcribe`
   - `gpt-4o-mini-transcribe-2025-12-15`
 - Mistral AI
-  - `voxtral-mini-latest`
+  - `voxtral-mini-transcribe-3-0` (default, Voxtral 3, public preview)
+  - `voxtral-small-transcribe-3-0` (Voxtral 3, higher accuracy, public preview)
+  - `voxtral-mini-latest` (Voxtral Transcribe 2, stable fallback)
 
 ## Requirements
 

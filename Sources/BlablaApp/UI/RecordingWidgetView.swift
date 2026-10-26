@@ -149,6 +149,10 @@ struct RecordingWidgetView: View {
             return "GPT-4o Transcribe"
         case .gpt4oMiniTranscribeSnapshot:
             return "GPT-4o Mini Transcribe"
+        case .voxtralMiniTranscribe3:
+            return "Voxtral Mini Transcribe 3"
+        case .voxtralSmallTranscribe3:
+            return "Voxtral Small Transcribe 3"
         case .voxtralMiniLatest:
             return "Voxtral Mini Latest"
         }
